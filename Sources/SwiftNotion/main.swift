@@ -6,7 +6,7 @@ import SwiftNotionCore
 struct SwiftNotion: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "A utility to sync files with Notion.",
-        subcommands: [Read.self, Write.self, Sync.self]
+        subcommands: [Read.self, Write.self, Sync.self, Test.self]
     )
 }
 
@@ -200,5 +200,24 @@ struct Sync: AsyncParsableCommand {
             output += "\(prefix)\(text)\n"
         }
         return output
+    }
+}
+
+struct Test: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Test parser output.")
+    
+    @Argument(help: "Path to file.")
+    var filePath: String
+    
+    func run() async throws {
+        let fileURL = URL(fileURLWithPath: filePath)
+        let content = try String(contentsOf: fileURL, encoding: .utf8)
+        let parser = MarkdownParser()
+        let blocks = parser.parse(markdown: content)
+        
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        let data = try encoder.encode(blocks)
+        print(String(data: data, encoding: .utf8)!)
     }
 }

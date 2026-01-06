@@ -96,12 +96,12 @@ public struct RichText: Codable {
 }
 
 public struct Annotations: Codable {
-    public let bold: Bool
-    public let italic: Bool
-    public let strikethrough: Bool
-    public let underline: Bool
-    public let code: Bool
-    public let color: String
+    public var bold: Bool
+    public var italic: Bool
+    public var strikethrough: Bool
+    public var underline: Bool
+    public var code: Bool
+    public var color: String
     
     public init(bold: Bool = false, italic: Bool = false, strikethrough: Bool = false, underline: Bool = false, code: Bool = false, color: String = "default") {
         self.bold = bold

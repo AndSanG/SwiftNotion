@@ -14,12 +14,15 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.2.0"),
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", branch: "main"),
     ],
     targets: [
         // Core Logic (Reusable)
         .target(
             name: "SwiftNotionCore",
-            dependencies: []
+            dependencies: [
+                .product(name: "Markdown", package: "swift-markdown"),
+            ]
         ),
         // CLI Tool (Executable)
         .executableTarget(
