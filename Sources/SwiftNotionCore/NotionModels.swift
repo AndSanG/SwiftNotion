@@ -12,11 +12,20 @@ public struct Block: Codable, Identifiable {
     public let type: BlockType
     public let hasChildren: Bool
     
-    // We only decode specific block content based on type
     public let paragraph: TextBlock?
     public let heading1: TextBlock?
     public let heading2: TextBlock?
     public let heading3: TextBlock?
+    
+    public init(id: String, type: BlockType, hasChildren: Bool, paragraph: TextBlock? = nil, heading1: TextBlock? = nil, heading2: TextBlock? = nil, heading3: TextBlock? = nil) {
+        self.id = id
+        self.type = type
+        self.hasChildren = hasChildren
+        self.paragraph = paragraph
+        self.heading1 = heading1
+        self.heading2 = heading2
+        self.heading3 = heading3
+    }
     
     enum CodingKeys: String, CodingKey {
         case id, type, paragraph
@@ -45,6 +54,10 @@ public enum BlockType: String, Codable {
 public struct TextBlock: Codable {
     public let richText: [RichText]
     
+    public init(richText: [RichText]) {
+        self.richText = richText
+    }
+    
     enum CodingKeys: String, CodingKey {
         case richText = "rich_text"
     }
@@ -54,6 +67,12 @@ public struct RichText: Codable {
     public let type: String
     public let plainText: String
     public let href: String?
+    
+    public init(type: String, plainText: String, href: String?) {
+        self.type = type
+        self.plainText = plainText
+        self.href = href
+    }
     
     enum CodingKeys: String, CodingKey {
         case type, href

@@ -56,29 +56,39 @@ public class NotionClient {
         }
     }
     
-    public func appendBlock(blockId: String, text: String) async throws {
+    public func appendBlocks(blockId: String, blocks: [Block]) async throws {
         var request = createRequest(path: "/blocks/\(blockId)/children", method: "PATCH")
         
-        // Construct simple paragraph block JSON
-        let json: [String: Any] = [
-            "children": [
-                [
-                    "object": "block",
-                    "type": "paragraph",
-                    "paragraph": [
-                        "rich_text": [
-                            [
-                                "type": "text",
-                                "text": [
-                                    "content": text
-                                ]
-                            ]
-                        ]
-                    ]
-                ]
+        let childrenJSON = blocks.map { block -> [String: Any] in
+            var blockJSON: [String: Any] = [
+                "object": "block",
+                "type": block.type.rawValue
             ]
-        ]
+            
+            // Construct the specific block content
+            // Note: This matches the structure expected by Notion API
+            if let paragraph = block.paragraph {
+                blockJSON["paragraph"] = [
+                    "rich_text": paragraph.richText.map { ["type": $0.type, "text": ["content": $0.plainText]] }
+                ]
+            } else if let h1 = block.heading1 {
+                blockJSON["heading_1"] = [
+                    "rich_text": h1.richText.map { ["type": $0.type, "text": ["content": $0.plainText]] }
+                ]
+            } else if let h2 = block.heading2 {
+                blockJSON["heading_2"] = [
+                    "rich_text": h2.richText.map { ["type": $0.type, "text": ["content": $0.plainText]] }
+                ]
+            } else if let h3 = block.heading3 {
+                blockJSON["heading_3"] = [
+                    "rich_text": h3.richText.map { ["type": $0.type, "text": ["content": $0.plainText]] }
+                ]
+            }
+            
+            return blockJSON
+        }
         
+        let json: [String: Any] = ["children": childrenJSON]
         request.httpBody = try JSONSerialization.data(withJSONObject: json)
         
         let (data, response) = try await session.data(for: request)
@@ -90,4 +100,5 @@ public class NotionClient {
             throw NotionError.requestFailed(statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1)
         }
     }
+
 }

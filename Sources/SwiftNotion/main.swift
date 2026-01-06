@@ -6,7 +6,7 @@ import SwiftNotionCore
 struct SwiftNotion: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "A utility to sync files with Notion.",
-        subcommands: [Read.self, Write.self]
+        subcommands: [Read.self, Write.self, Sync.self]
     )
 }
 
@@ -80,11 +80,67 @@ struct Write: AsyncParsableCommand {
         let client = NotionClient(apiKey: apiKey)
         print("Appending to page: \(pageId)...")
         
+        // Convert single text to a simple paragraph block
+        let block = Block(
+            id: UUID().uuidString,
+            type: .paragraph,
+            hasChildren: false,
+            paragraph: TextBlock(richText: [RichText(type: "text", plainText: text, href: nil)]),
+            heading1: nil, heading2: nil, heading3: nil
+        )
+        
         do {
-            try await client.appendBlock(blockId: pageId, text: text)
+            try await client.appendBlocks(blockId: pageId, blocks: [block])
             print("Successfully appended block!")
         } catch {
             print("Error appending block: \(error)")
+        }
+    }
+}
+
+struct Sync: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Parse a local Markdown file and append it to Notion.")
+    
+    @Argument(help: "Path to the local Markdown file.")
+    var filePath: String
+    
+    @Argument(help: "The Block/Page ID to append to.")
+    var pageId: String
+    
+    func run() async throws {
+        guard let apiKey = ProcessInfo.processInfo.environment["NOTION_KEY"] else {
+            print("Error: NOTION_KEY environment variable not set.")
+            return
+        }
+        
+        // 1. Read Local File
+        let fileURL = URL(fileURLWithPath: filePath)
+        guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
+            print("Error: Could not read file at \(filePath)")
+            return
+        }
+        
+        print("Read \(content.count) bytes from \(fileURL.lastPathComponent)")
+        
+        // 2. Parse Markdown
+        let parser = MarkdownParser()
+        let blocks = parser.parse(markdown: content)
+        print("Parsed \(blocks.count) blocks.")
+        
+        if blocks.isEmpty {
+            print("No blocks found to sync.")
+            return
+        }
+        
+        // 3. Send to Notion
+        let client = NotionClient(apiKey: apiKey)
+        print("Syncing to Notion page \(pageId)...")
+        
+        do {
+            try await client.appendBlocks(blockId: pageId, blocks: blocks)
+            print("Successfully synced!")
+        } catch {
+            print("Error syncing blocks: \(error)")
         }
     }
 }
