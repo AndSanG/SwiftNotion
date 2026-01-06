@@ -90,7 +90,7 @@ struct Write: AsyncParsableCommand {
         )
         
         do {
-            try await client.appendBlocks(blockId: pageId, blocks: [block])
+            _ = try await client.appendBlocks(blockId: pageId, blocks: [block])
             print("Successfully appended block!")
         } catch {
             print("Error appending block: \(error)")
@@ -137,6 +137,7 @@ struct Sync: AsyncParsableCommand {
         print("Syncing to Notion page \(pageId)...")
         
         var newBlocksBuffer: [Block] = []
+        var finalOrderedBlocks: [Block] = []
         
         for block in blocks {
             if block.isNew {
@@ -145,7 +146,8 @@ struct Sync: AsyncParsableCommand {
                 // If we have pending new blocks, append them first (they go to bottom)
                 if !newBlocksBuffer.isEmpty {
                     print("Appending \(newBlocksBuffer.count) new blocks...")
-                    try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
+                    let created = try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
+                    finalOrderedBlocks.append(contentsOf: created)
                     newBlocksBuffer.removeAll()
                 }
                 
@@ -153,16 +155,20 @@ struct Sync: AsyncParsableCommand {
                 print("Updating block \(block.id)...")
                 let text = extractText(from: block)
                 try await client.updateBlock(blockId: block.id, type: block.type, text: text)
+                finalOrderedBlocks.append(block) // Keep existing block
             }
         }
         
         // flush remaining
         if !newBlocksBuffer.isEmpty {
              print("Appending \(newBlocksBuffer.count) new blocks...")
-             try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
+             let created = try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
+             finalOrderedBlocks.append(contentsOf: created)
         }
         
-        print("Successfully synced!")
+        print("Successfully synced! Writing back IDs to \(filePath)...")
+        let newContent = serialize(blocks: finalOrderedBlocks)
+        try newContent.write(to: fileURL, atomically: true, encoding: .utf8)
     }
     
     // Helper to extract plain text from block for update
@@ -172,5 +178,26 @@ struct Sync: AsyncParsableCommand {
         if let h2 = block.heading2 { return h2.richText.first?.plainText ?? "" }
         if let h3 = block.heading3 { return h3.richText.first?.plainText ?? "" }
         return ""
+    }
+    
+    func serialize(blocks: [Block]) -> String {
+        var output = ""
+        for block in blocks {
+            // Add ID comment
+            output += "<!-- notion-id: \(block.id) -->\n"
+            
+            // Add Content
+            let text = extractText(from: block)
+            let prefix: String
+            switch block.type {
+            case .heading1: prefix = "# "
+            case .heading2: prefix = "## "
+            case .heading3: prefix = "### "
+            default: prefix = ""
+            }
+            
+            output += "\(prefix)\(text)\n"
+        }
+        return output
     }
 }

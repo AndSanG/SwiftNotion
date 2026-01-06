@@ -56,7 +56,7 @@ public class NotionClient {
         }
     }
     
-    public func appendBlocks(blockId: String, blocks: [Block]) async throws {
+    public func appendBlocks(blockId: String, blocks: [Block]) async throws -> [Block] {
         var request = createRequest(path: "/blocks/\(blockId)/children", method: "PATCH")
         
         let childrenJSON = blocks.map { block -> [String: Any] in
@@ -98,6 +98,14 @@ public class NotionClient {
                 print("Notion API Error: \(errorText)")
             }
             throw NotionError.requestFailed(statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        
+        // Parse the response to return the new blocks (with IDs)
+        do {
+            let list = try JSONDecoder().decode(NotionList<Block>.self, from: data)
+            return list.results
+        } catch {
+            throw NotionError.decodingFailed(error)
         }
     }
 
