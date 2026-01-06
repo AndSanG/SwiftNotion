@@ -186,7 +186,7 @@ struct Sync: AsyncParsableCommand {
         for block in blocks {
             output += "<!-- notion-id: \(block.id) -->\n"
             
-            let text = getPlainText(from: block)
+            let text = serializeRichTextToMarkdown(getRichText(from: block))
             let prefix: String
             switch block.type {
             case .heading1: prefix = "# "
@@ -200,6 +200,18 @@ struct Sync: AsyncParsableCommand {
             output += "\(prefix)\(text)\n"
         }
         return output
+    }
+    
+    func serializeRichTextToMarkdown(_ richText: [RichText]) -> String {
+        return richText.map { rt in
+            var text = rt.plainText
+            if let ann = rt.annotations {
+                if ann.code { text = "`\(text)`" }
+                if ann.italic { text = "*\(text)*" }
+                if ann.bold { text = "**\(text)**" }
+            }
+            return text
+        }.joined()
     }
 }
 
