@@ -101,4 +101,35 @@ public class NotionClient {
         }
     }
 
+    public func updateBlock(blockId: String, type: BlockType, text: String) async throws {
+        var request = createRequest(path: "/blocks/\(blockId)", method: "PATCH")
+        
+        var blockJSON: [String: Any] = [
+             "object": "block",
+             "type": type.rawValue
+         ]
+         
+         let richText = [["type": "text", "text": ["content": text]]]
+         
+         if type == .paragraph {
+             blockJSON["paragraph"] = ["rich_text": richText]
+         } else if type == .heading1 {
+             blockJSON["heading_1"] = ["rich_text": richText]
+         } else if type == .heading2 {
+             blockJSON["heading_2"] = ["rich_text": richText]
+         } else if type == .heading3 {
+             blockJSON["heading_3"] = ["rich_text": richText]
+         }
+         
+         request.httpBody = try JSONSerialization.data(withJSONObject: blockJSON)
+         
+         let (data, response) = try await session.data(for: request)
+         
+         guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+              if let errorText = String(data: data, encoding: .utf8) {
+                 print("Notion API Error: \(errorText)")
+             }
+             throw NotionError.requestFailed(statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1)
+         }
+    }
 }

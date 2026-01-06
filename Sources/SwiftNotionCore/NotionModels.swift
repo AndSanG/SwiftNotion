@@ -17,7 +17,11 @@ public struct Block: Codable, Identifiable {
     public let heading2: TextBlock?
     public let heading3: TextBlock?
     
-    public init(id: String, type: BlockType, hasChildren: Bool, paragraph: TextBlock? = nil, heading1: TextBlock? = nil, heading2: TextBlock? = nil, heading3: TextBlock? = nil) {
+    // Local-only property to track if this block needs to be created or updated.
+    // Not encoded to/from JSON (we ignore it in CodingKeys)
+    public var isNew: Bool = false
+    
+    public init(id: String, type: BlockType, hasChildren: Bool, paragraph: TextBlock? = nil, heading1: TextBlock? = nil, heading2: TextBlock? = nil, heading3: TextBlock? = nil, isNew: Bool = false) {
         self.id = id
         self.type = type
         self.hasChildren = hasChildren
@@ -25,6 +29,7 @@ public struct Block: Codable, Identifiable {
         self.heading1 = heading1
         self.heading2 = heading2
         self.heading3 = heading3
+        self.isNew = isNew
     }
     
     enum CodingKeys: String, CodingKey {

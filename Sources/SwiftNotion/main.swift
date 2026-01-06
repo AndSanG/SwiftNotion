@@ -57,7 +57,7 @@ struct Read: AsyncParsableCommand {
         }
         
         if !text.isEmpty {
-            print("\(prefix)\(text)")
+            print("[\(block.id)] \(prefix)\(text)")
         }
     }
 }
@@ -136,11 +136,41 @@ struct Sync: AsyncParsableCommand {
         let client = NotionClient(apiKey: apiKey)
         print("Syncing to Notion page \(pageId)...")
         
-        do {
-            try await client.appendBlocks(blockId: pageId, blocks: blocks)
-            print("Successfully synced!")
-        } catch {
-            print("Error syncing blocks: \(error)")
+        var newBlocksBuffer: [Block] = []
+        
+        for block in blocks {
+            if block.isNew {
+                newBlocksBuffer.append(block)
+            } else {
+                // If we have pending new blocks, append them first (they go to bottom)
+                if !newBlocksBuffer.isEmpty {
+                    print("Appending \(newBlocksBuffer.count) new blocks...")
+                    try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
+                    newBlocksBuffer.removeAll()
+                }
+                
+                // Now update the existing block
+                print("Updating block \(block.id)...")
+                let text = extractText(from: block)
+                try await client.updateBlock(blockId: block.id, type: block.type, text: text)
+            }
         }
+        
+        // flush remaining
+        if !newBlocksBuffer.isEmpty {
+             print("Appending \(newBlocksBuffer.count) new blocks...")
+             try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
+        }
+        
+        print("Successfully synced!")
+    }
+    
+    // Helper to extract plain text from block for update
+    func extractText(from block: Block) -> String {
+        if let p = block.paragraph { return p.richText.first?.plainText ?? "" }
+        if let h1 = block.heading1 { return h1.richText.first?.plainText ?? "" }
+        if let h2 = block.heading2 { return h2.richText.first?.plainText ?? "" }
+        if let h3 = block.heading3 { return h3.richText.first?.plainText ?? "" }
+        return ""
     }
 }
