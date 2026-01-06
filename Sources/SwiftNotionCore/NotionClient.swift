@@ -56,6 +56,28 @@ public class NotionClient {
         }
     }
     
+    private func serializeRichText(_ richText: [RichText]) -> [[String: Any]] {
+        return richText.map { text in
+            var dict: [String: Any] = [
+                "type": text.type,
+                "text": ["content": text.plainText]
+            ]
+            
+            if let annotations = text.annotations {
+                dict["annotations"] = [
+                    "bold": annotations.bold,
+                    "italic": annotations.italic,
+                    "strikethrough": annotations.strikethrough,
+                    "underline": annotations.underline,
+                    "code": annotations.code,
+                    "color": annotations.color
+                ]
+            }
+            
+            return dict
+        }
+    }
+
     public func appendBlocks(blockId: String, blocks: [Block]) async throws -> [Block] {
         var request = createRequest(path: "/blocks/\(blockId)/children", method: "PATCH")
         
@@ -65,24 +87,18 @@ public class NotionClient {
                 "type": block.type.rawValue
             ]
             
-            // Construct the specific block content
-            // Note: This matches the structure expected by Notion API
             if let paragraph = block.paragraph {
-                blockJSON["paragraph"] = [
-                    "rich_text": paragraph.richText.map { ["type": $0.type, "text": ["content": $0.plainText]] }
-                ]
+                blockJSON["paragraph"] = ["rich_text": serializeRichText(paragraph.richText)]
             } else if let h1 = block.heading1 {
-                blockJSON["heading_1"] = [
-                    "rich_text": h1.richText.map { ["type": $0.type, "text": ["content": $0.plainText]] }
-                ]
+                blockJSON["heading_1"] = ["rich_text": serializeRichText(h1.richText)]
             } else if let h2 = block.heading2 {
-                blockJSON["heading_2"] = [
-                    "rich_text": h2.richText.map { ["type": $0.type, "text": ["content": $0.plainText]] }
-                ]
+                blockJSON["heading_2"] = ["rich_text": serializeRichText(h2.richText)]
             } else if let h3 = block.heading3 {
-                blockJSON["heading_3"] = [
-                    "rich_text": h3.richText.map { ["type": $0.type, "text": ["content": $0.plainText]] }
-                ]
+                blockJSON["heading_3"] = ["rich_text": serializeRichText(h3.richText)]
+            } else if let bullet = block.bulletedListItem {
+                blockJSON["bulleted_list_item"] = ["rich_text": serializeRichText(bullet.richText)]
+            } else if let numbered = block.numberedListItem {
+                blockJSON["numbered_list_item"] = ["rich_text": serializeRichText(numbered.richText)]
             }
             
             return blockJSON
@@ -100,7 +116,6 @@ public class NotionClient {
             throw NotionError.requestFailed(statusCode: (response as? HTTPURLResponse)?.statusCode ?? -1)
         }
         
-        // Parse the response to return the new blocks (with IDs)
         do {
             let list = try JSONDecoder().decode(NotionList<Block>.self, from: data)
             return list.results
@@ -110,6 +125,21 @@ public class NotionClient {
     }
 
     public func updateBlock(blockId: String, type: BlockType, text: String) async throws {
+        // NOTE: text argument is deprecated in favor of Rich Text parsing, 
+        // but for now we will wrap it in a basic RichText object.
+        // Ideally we should pass [RichText] to updateBlock.
+        // I'll overload or update this method.
+        // For backwards compatibility let's parse basic text.
+        // Actually, main.swift needs to pass RichText now.
+        // Let's assume text is plain text for now, or update main later.
+        
+        // Wait, markdown parser produces [RichText].
+        // So updateBlock should accept [RichText], not String.
+        // Let's update the signature.
+       fatalError("Use updated updateBlock(blockId:type:richText:) instead")
+    }
+
+    public func updateBlock(blockId: String, type: BlockType, richText: [RichText]) async throws {
         var request = createRequest(path: "/blocks/\(blockId)", method: "PATCH")
         
         var blockJSON: [String: Any] = [
@@ -117,16 +147,20 @@ public class NotionClient {
              "type": type.rawValue
          ]
          
-         let richText = [["type": "text", "text": ["content": text]]]
+         let serializedText = serializeRichText(richText)
          
          if type == .paragraph {
-             blockJSON["paragraph"] = ["rich_text": richText]
+             blockJSON["paragraph"] = ["rich_text": serializedText]
          } else if type == .heading1 {
-             blockJSON["heading_1"] = ["rich_text": richText]
+             blockJSON["heading_1"] = ["rich_text": serializedText]
          } else if type == .heading2 {
-             blockJSON["heading_2"] = ["rich_text": richText]
+             blockJSON["heading_2"] = ["rich_text": serializedText]
          } else if type == .heading3 {
-             blockJSON["heading_3"] = ["rich_text": richText]
+             blockJSON["heading_3"] = ["rich_text": serializedText]
+         } else if type == .bulletedListItem {
+             blockJSON["bulleted_list_item"] = ["rich_text": serializedText]
+         } else if type == .numberedListItem {
+             blockJSON["numbered_list_item"] = ["rich_text": serializedText]
          }
          
          request.httpBody = try JSONSerialization.data(withJSONObject: blockJSON)

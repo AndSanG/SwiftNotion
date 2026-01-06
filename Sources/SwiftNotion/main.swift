@@ -10,6 +10,30 @@ struct SwiftNotion: AsyncParsableCommand {
     )
 }
 
+// Helper to print plain text from blocks
+func getPlainText(from block: Block) -> String {
+    let richText: [RichText]
+    if let p = block.paragraph { richText = p.richText }
+    else if let h1 = block.heading1 { richText = h1.richText }
+    else if let h2 = block.heading2 { richText = h2.richText }
+    else if let h3 = block.heading3 { richText = h3.richText }
+    else if let b = block.bulletedListItem { richText = b.richText }
+    else if let n = block.numberedListItem { richText = n.richText }
+    else { return "" }
+    
+    return richText.map { $0.plainText }.joined()
+}
+
+func getRichText(from block: Block) -> [RichText] {
+    if let p = block.paragraph { return p.richText }
+    else if let h1 = block.heading1 { return h1.richText }
+    else if let h2 = block.heading2 { return h2.richText }
+    else if let h3 = block.heading3 { return h3.richText }
+    else if let b = block.bulletedListItem { return b.richText }
+    else if let n = block.numberedListItem { return n.richText }
+    return []
+}
+
 struct Read: AsyncParsableCommand {
     static let configuration = CommandConfiguration(abstract: "Read content from a Notion page.")
     
@@ -37,23 +61,16 @@ struct Read: AsyncParsableCommand {
     
     func printBlock(_ block: Block) {
         let prefix: String
-        let text: String
+        let text = getPlainText(from: block)
         
         switch block.type {
-        case .heading1:
-            prefix = "# "
-            text = block.heading1?.richText.first?.plainText ?? ""
-        case .heading2:
-            prefix = "## "
-            text = block.heading2?.richText.first?.plainText ?? ""
-        case .heading3:
-            prefix = "### "
-            text = block.heading3?.richText.first?.plainText ?? ""
-        case .paragraph:
-            prefix = ""
-            text = block.paragraph?.richText.first?.plainText ?? ""
-        default:
-            return // Skip unsupported for now
+        case .heading1: prefix = "# "
+        case .heading2: prefix = "## "
+        case .heading3: prefix = "### "
+        case .paragraph: prefix = ""
+        case .bulletedListItem: prefix = "- "
+        case .numberedListItem: prefix = "1. "
+        default: return
         }
         
         if !text.isEmpty {
@@ -80,13 +97,12 @@ struct Write: AsyncParsableCommand {
         let client = NotionClient(apiKey: apiKey)
         print("Appending to page: \(pageId)...")
         
-        // Convert single text to a simple paragraph block
         let block = Block(
             id: UUID().uuidString,
             type: .paragraph,
             hasChildren: false,
             paragraph: TextBlock(richText: [RichText(type: "text", plainText: text, href: nil)]),
-            heading1: nil, heading2: nil, heading3: nil
+            isNew: true
         )
         
         do {
@@ -113,7 +129,6 @@ struct Sync: AsyncParsableCommand {
             return
         }
         
-        // 1. Read Local File
         let fileURL = URL(fileURLWithPath: filePath)
         guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
             print("Error: Could not read file at \(filePath)")
@@ -122,7 +137,6 @@ struct Sync: AsyncParsableCommand {
         
         print("Read \(content.count) bytes from \(fileURL.lastPathComponent)")
         
-        // 2. Parse Markdown
         let parser = MarkdownParser()
         let blocks = parser.parse(markdown: content)
         print("Parsed \(blocks.count) blocks.")
@@ -132,7 +146,6 @@ struct Sync: AsyncParsableCommand {
             return
         }
         
-        // 3. Send to Notion
         let client = NotionClient(apiKey: apiKey)
         print("Syncing to Notion page \(pageId)...")
         
@@ -143,7 +156,6 @@ struct Sync: AsyncParsableCommand {
             if block.isNew {
                 newBlocksBuffer.append(block)
             } else {
-                // If we have pending new blocks, append them first (they go to bottom)
                 if !newBlocksBuffer.isEmpty {
                     print("Appending \(newBlocksBuffer.count) new blocks...")
                     let created = try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
@@ -151,15 +163,13 @@ struct Sync: AsyncParsableCommand {
                     newBlocksBuffer.removeAll()
                 }
                 
-                // Now update the existing block
                 print("Updating block \(block.id)...")
-                let text = extractText(from: block)
-                try await client.updateBlock(blockId: block.id, type: block.type, text: text)
-                finalOrderedBlocks.append(block) // Keep existing block
+                let richText = getRichText(from: block)
+                try await client.updateBlock(blockId: block.id, type: block.type, richText: richText)
+                finalOrderedBlocks.append(block)
             }
         }
         
-        // flush remaining
         if !newBlocksBuffer.isEmpty {
              print("Appending \(newBlocksBuffer.count) new blocks...")
              let created = try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
@@ -171,28 +181,19 @@ struct Sync: AsyncParsableCommand {
         try newContent.write(to: fileURL, atomically: true, encoding: .utf8)
     }
     
-    // Helper to extract plain text from block for update
-    func extractText(from block: Block) -> String {
-        if let p = block.paragraph { return p.richText.first?.plainText ?? "" }
-        if let h1 = block.heading1 { return h1.richText.first?.plainText ?? "" }
-        if let h2 = block.heading2 { return h2.richText.first?.plainText ?? "" }
-        if let h3 = block.heading3 { return h3.richText.first?.plainText ?? "" }
-        return ""
-    }
-    
     func serialize(blocks: [Block]) -> String {
         var output = ""
         for block in blocks {
-            // Add ID comment
             output += "<!-- notion-id: \(block.id) -->\n"
             
-            // Add Content
-            let text = extractText(from: block)
+            let text = getPlainText(from: block)
             let prefix: String
             switch block.type {
             case .heading1: prefix = "# "
             case .heading2: prefix = "## "
             case .heading3: prefix = "### "
+            case .bulletedListItem: prefix = "- "
+            case .numberedListItem: prefix = "1. "
             default: prefix = ""
             }
             
