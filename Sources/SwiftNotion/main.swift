@@ -19,6 +19,9 @@ func getPlainText(from block: Block) -> String {
     else if let h3 = block.heading3 { richText = h3.richText }
     else if let b = block.bulletedListItem { richText = b.richText }
     else if let n = block.numberedListItem { richText = n.richText }
+    else if let q = block.quote { richText = q.richText }
+    else if let c = block.code { richText = c.richText }
+    else if let t = block.toDo { richText = t.richText }
     else { return "" }
     
     return richText.map { $0.plainText }.joined()
@@ -31,6 +34,9 @@ func getRichText(from block: Block) -> [RichText] {
     else if let h3 = block.heading3 { return h3.richText }
     else if let b = block.bulletedListItem { return b.richText }
     else if let n = block.numberedListItem { return n.richText }
+    else if let q = block.quote { return q.richText }
+    else if let c = block.code { return c.richText }
+    else if let t = block.toDo { return t.richText }
     return []
 }
 
@@ -70,10 +76,19 @@ struct Read: AsyncParsableCommand {
         case .paragraph: prefix = ""
         case .bulletedListItem: prefix = "- "
         case .numberedListItem: prefix = "1. "
+        case .quote: prefix = "> "
+        case .toDo:
+            let checked = block.toDo?.checked ?? false
+            prefix = checked ? "- [x] " : "- [ ] "
+        case .code: prefix = "" // Code blocks handled specially
         default: return
         }
         
-        if !text.isEmpty {
+        if block.type == .code {
+             print("[\(block.id)] ```\(block.code?.language ?? "")")
+             print("\(text)")
+             print("```")
+        } else if !text.isEmpty {
             print("[\(block.id)] \(prefix)\(text)")
         }
     }
@@ -187,6 +202,13 @@ struct Sync: AsyncParsableCommand {
             output += "<!-- notion-id: \(block.id) -->\n"
             
             let text = serializeRichTextToMarkdown(getRichText(from: block))
+            
+            if block.type == .code {
+                let lang = block.code?.language ?? ""
+                output += "```\(lang)\n\(text)\n```\n"
+                continue
+            }
+            
             let prefix: String
             switch block.type {
             case .heading1: prefix = "# "
@@ -194,6 +216,10 @@ struct Sync: AsyncParsableCommand {
             case .heading3: prefix = "### "
             case .bulletedListItem: prefix = "- "
             case .numberedListItem: prefix = "1. "
+            case .quote: prefix = "> "
+            case .toDo:
+                 let checked = block.toDo?.checked ?? false
+                 prefix = checked ? "- [x] " : "- [ ] "
             default: prefix = ""
             }
             

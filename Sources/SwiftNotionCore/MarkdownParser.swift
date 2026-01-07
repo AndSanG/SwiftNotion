@@ -67,31 +67,75 @@ private struct NotionBlockWalker: MarkupWalker {
         pendingId = nil
     }
     
+    mutating func visitBlockQuote(_ blockQuote: BlockQuote) {
+        let richText = extractRichText(from: blockQuote)
+        let id = pendingId ?? UUID().uuidString
+        let isNew = (pendingId == nil)
+        
+        let block = Block(
+            id: id,
+            type: .quote,
+            hasChildren: false,
+            quote: QuoteBlock(richText: richText),
+            isNew: isNew
+        )
+        blocks.append(block)
+        pendingId = nil
+    }
+    
+    mutating func visitCodeBlock(_ codeBlock: Markdown.CodeBlock) {
+        let text = codeBlock.code
+        let language = codeBlock.language ?? "plain text"
+        let id = pendingId ?? UUID().uuidString
+        let isNew = (pendingId == nil)
+        
+        let block = Block(
+            id: id,
+            type: .code,
+            hasChildren: false,
+            code: SwiftNotionCore.CodeBlock(richText: [RichText(type: "text", plainText: text, href: nil)], language: language),
+            isNew: isNew
+        )
+        blocks.append(block)
+        pendingId = nil
+    }
+    
     mutating func visitListItem(_ listItem: ListItem) {
         let richText = extractRichText(from: listItem)
         let id = pendingId ?? UUID().uuidString
         let isNew = (pendingId == nil)
         
-        let type: BlockType
-        if listItem.parent is UnorderedList {
+        // Check if it's a To-Do item (hacky check on start of text? 
+        // actually swift-markdown doesn't explicitly parse [ ] as a task list item unless GFM is fully enabled and we check the checkbox state)
+        // BUT, swift-markdown ListItem has a `checkbox` property!
+        
+        var type: BlockType?
+        var checked: Bool?
+        
+        if let checkbox = listItem.checkbox {
+            type = .toDo
+            checked = (checkbox == .checked)
+        } else if listItem.parent is UnorderedList {
             type = .bulletedListItem
         } else {
             type = .numberedListItem
         }
         
+        guard let finalType = type else { return }
+        
         let block = Block(
             id: id,
-            type: type,
+            type: finalType,
             hasChildren: false,
-            bulletedListItem: type == .bulletedListItem ? TextBlock(richText: richText) : nil,
-            numberedListItem: type == .numberedListItem ? TextBlock(richText: richText) : nil,
+            bulletedListItem: finalType == .bulletedListItem ? TextBlock(richText: richText) : nil,
+            numberedListItem: finalType == .numberedListItem ? TextBlock(richText: richText) : nil,
+            toDo: finalType == .toDo ? ToDoBlock(richText: richText, checked: checked ?? false) : nil,
             isNew: isNew
         )
         blocks.append(block)
         pendingId = nil
         
-        // Do NOT descend into children, as we've already extracted the text
-        // and mapped the ListItem to a Block.
+        // Do NOT descend into children
     }
 }
 

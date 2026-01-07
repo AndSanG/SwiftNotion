@@ -18,12 +18,15 @@ public struct Block: Codable, Identifiable {
     public let heading3: TextBlock?
     public let bulletedListItem: TextBlock?
     public let numberedListItem: TextBlock?
+    public let quote: QuoteBlock?
+    public let code: CodeBlock?
+    public let toDo: ToDoBlock?
     
     // Local-only property to track if this block needs to be created or updated.
     // Not encoded to/from JSON (we ignore it in CodingKeys)
     public var isNew: Bool = false
     
-    public init(id: String, type: BlockType, hasChildren: Bool, paragraph: TextBlock? = nil, heading1: TextBlock? = nil, heading2: TextBlock? = nil, heading3: TextBlock? = nil, bulletedListItem: TextBlock? = nil, numberedListItem: TextBlock? = nil, isNew: Bool = false) {
+    public init(id: String, type: BlockType, hasChildren: Bool, paragraph: TextBlock? = nil, heading1: TextBlock? = nil, heading2: TextBlock? = nil, heading3: TextBlock? = nil, bulletedListItem: TextBlock? = nil, numberedListItem: TextBlock? = nil, quote: QuoteBlock? = nil, code: CodeBlock? = nil, toDo: ToDoBlock? = nil, isNew: Bool = false) {
         self.id = id
         self.type = type
         self.hasChildren = hasChildren
@@ -33,17 +36,21 @@ public struct Block: Codable, Identifiable {
         self.heading3 = heading3
         self.bulletedListItem = bulletedListItem
         self.numberedListItem = numberedListItem
+        self.quote = quote
+        self.code = code
+        self.toDo = toDo
         self.isNew = isNew
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, type, paragraph
+        case id, type, paragraph, quote, code
         case hasChildren = "has_children"
         case heading1 = "heading_1"
         case heading2 = "heading_2"
         case heading3 = "heading_3"
         case bulletedListItem = "bulleted_list_item"
         case numberedListItem = "numbered_list_item"
+        case toDo = "to_do"
     }
 }
 
@@ -54,6 +61,9 @@ public enum BlockType: String, Codable {
     case heading3 = "heading_3"
     case bulletedListItem = "bulleted_list_item"
     case numberedListItem = "numbered_list_item"
+    case quote
+    case code
+    case toDo = "to_do"
     case unsupported
     
     public init(from decoder: Decoder) throws {
@@ -65,6 +75,48 @@ public enum BlockType: String, Codable {
 
 // MARK: - Text Content
 public struct TextBlock: Codable {
+    public let richText: [RichText]
+    
+    public init(richText: [RichText]) {
+        self.richText = richText
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case richText = "rich_text"
+    }
+}
+
+public struct CodeBlock: Codable {
+    public let richText: [RichText]
+    public let language: String
+    
+    public init(richText: [RichText], language: String = "plain text") {
+        self.richText = richText
+        self.language = language
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case richText = "rich_text"
+        case language
+    }
+}
+
+public struct ToDoBlock: Codable {
+    public let richText: [RichText]
+    public let checked: Bool?
+    
+    public init(richText: [RichText], checked: Bool = false) {
+        self.richText = richText
+        self.checked = checked
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case richText = "rich_text"
+        case checked
+    }
+}
+
+public struct QuoteBlock: Codable {
     public let richText: [RichText]
     
     public init(richText: [RichText]) {

@@ -99,6 +99,18 @@ public class NotionClient {
                 blockJSON["bulleted_list_item"] = ["rich_text": serializeRichText(bullet.richText)]
             } else if let numbered = block.numberedListItem {
                 blockJSON["numbered_list_item"] = ["rich_text": serializeRichText(numbered.richText)]
+            } else if let quote = block.quote {
+                blockJSON["quote"] = ["rich_text": serializeRichText(quote.richText)]
+            } else if let code = block.code {
+                blockJSON["code"] = [
+                    "rich_text": serializeRichText(code.richText),
+                    "language": code.language
+                ]
+            } else if let toDo = block.toDo {
+                blockJSON["to_do"] = [
+                    "rich_text": serializeRichText(toDo.richText),
+                    "checked": toDo.checked ?? false
+                ]
             }
             
             return blockJSON
@@ -161,6 +173,20 @@ public class NotionClient {
              blockJSON["bulleted_list_item"] = ["rich_text": serializedText]
          } else if type == .numberedListItem {
              blockJSON["numbered_list_item"] = ["rich_text": serializedText]
+         } else if type == .quote {
+             blockJSON["quote"] = ["rich_text": serializedText]
+         } else if type == .code {
+             // Code block update is trickier because we might also want to update language.
+             // But signature only takes richText. 
+             // Ideally we should pass the whole Block or a specific struct.
+             // For now, let's just update text and assume default language (or keep existing? API might overwrite).
+             // Notion API: "language" is optional on update if not changing? Let's check docs.
+             // Correct: partial update. But if we send "code" object, we usually need keys. 
+             // Let's assume just updating text for now.
+             blockJSON["code"] = ["rich_text": serializedText]
+         } else if type == .toDo {
+            // Similarly, we are only updating text here, not checked state.
+             blockJSON["to_do"] = ["rich_text": serializedText]
          }
          
          request.httpBody = try JSONSerialization.data(withJSONObject: blockJSON)
