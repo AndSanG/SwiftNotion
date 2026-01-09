@@ -1,6 +1,7 @@
 import Foundation
 import ArgumentParser
 import SwiftNotionCore
+@preconcurrency import NotionSwift
 
 @main
 struct SwiftNotion: AsyncParsableCommand {
@@ -10,34 +11,65 @@ struct SwiftNotion: AsyncParsableCommand {
     )
 }
 
-// Helper to print plain text from blocks
-func getPlainText(from block: Block) -> String {
-    let richText: [RichText]
-    if let p = block.paragraph { richText = p.richText }
-    else if let h1 = block.heading1 { richText = h1.richText }
-    else if let h2 = block.heading2 { richText = h2.richText }
-    else if let h3 = block.heading3 { richText = h3.richText }
-    else if let b = block.bulletedListItem { richText = b.richText }
-    else if let n = block.numberedListItem { richText = n.richText }
-    else if let q = block.quote { richText = q.richText }
-    else if let c = block.code { richText = c.richText }
-    else if let t = block.toDo { richText = t.richText }
-    else { return "" }
-    
-    return richText.map { $0.plainText }.joined()
+// MARK: - Async Wrappers
+extension NotionClient {
+    func blockChildren(blockId: Block.Identifier) async throws -> ListResponse<ReadBlock> {
+        return try await withCheckedThrowingContinuation { continuation in
+            self.blockChildren(blockId: blockId, params: .init()) { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+
+    func blockAppend(blockId: Block.Identifier, children: [WriteBlock]) async throws -> ListResponse<ReadBlock> {
+        return try await withCheckedThrowingContinuation { continuation in
+            self.blockAppend(blockId: blockId, children: children) { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
+
+    func blockUpdate(blockId: Block.Identifier, value: UpdateBlock) async throws -> ReadBlock {
+        return try await withCheckedThrowingContinuation { continuation in
+            self.blockUpdate(blockId: blockId, value: value) { result in
+                continuation.resume(with: result)
+            }
+        }
+    }
 }
 
-func getRichText(from block: Block) -> [RichText] {
-    if let p = block.paragraph { return p.richText }
-    else if let h1 = block.heading1 { return h1.richText }
-    else if let h2 = block.heading2 { return h2.richText }
-    else if let h3 = block.heading3 { return h3.richText }
-    else if let b = block.bulletedListItem { return b.richText }
-    else if let n = block.numberedListItem { return n.richText }
-    else if let q = block.quote { return q.richText }
-    else if let c = block.code { return c.richText }
-    else if let t = block.toDo { return t.richText }
-    return []
+// Helper to print plain text from blocks
+func getPlainText(from type: BlockType) -> String {
+    let richText: [RichText]
+    switch type {
+    case .paragraph(let value): richText = value.richText
+    case .heading1(let value): richText = value.richText
+    case .heading2(let value): richText = value.richText
+    case .heading3(let value): richText = value.richText
+    case .bulletedListItem(let value): richText = value.richText
+    case .numberedListItem(let value): richText = value.richText
+    case .toDo(let value): richText = value.richText
+    case .quote(let value): richText = value.richText
+    case .code(let value): richText = value.richText
+    default: return ""
+    }
+    
+    return richText.compactMap { $0.plainText }.joined()
+}
+
+func getRichText(from type: BlockType) -> [RichText] {
+    switch type {
+    case .paragraph(let value): return value.richText
+    case .heading1(let value): return value.richText
+    case .heading2(let value): return value.richText
+    case .heading3(let value): return value.richText
+    case .bulletedListItem(let value): return value.richText
+    case .numberedListItem(let value): return value.richText
+    case .toDo(let value): return value.richText
+    case .quote(let value): return value.richText
+    case .code(let value): return value.richText
+    default: return []
+    }
 }
 
 struct Read: AsyncParsableCommand {
@@ -52,12 +84,12 @@ struct Read: AsyncParsableCommand {
             return
         }
         
-        let client = NotionClient(apiKey: apiKey)
+        let client = NotionClient(accessKeyProvider: StringAccessKeyProvider(accessKey: apiKey))
         print("Fetching blocks for page: \(pageId)...")
         
         do {
-            let blocks = try await client.getBlockChildren(blockId: pageId)
-            for block in blocks {
+            let blocks = try await client.blockChildren(blockId: Block.Identifier(pageId))
+            for block in blocks.results {
                 printBlock(block)
             }
         } catch {
@@ -65,9 +97,9 @@ struct Read: AsyncParsableCommand {
         }
     }
     
-    func printBlock(_ block: Block) {
+    func printBlock(_ block: ReadBlock) {
         let prefix: String
-        let text = getPlainText(from: block)
+        let text = getPlainText(from: block.type)
         
         switch block.type {
         case .heading1: prefix = "# "
@@ -77,15 +109,16 @@ struct Read: AsyncParsableCommand {
         case .bulletedListItem: prefix = "- "
         case .numberedListItem: prefix = "1. "
         case .quote: prefix = "> "
-        case .toDo:
-            let checked = block.toDo?.checked ?? false
+        case .toDo(let value):
+            let checked = value.checked ?? false
             prefix = checked ? "- [x] " : "- [ ] "
-        case .code: prefix = "" // Code blocks handled specially
+        case .code: prefix = ""
         default: return
         }
         
-        if block.type == .code {
-             print("[\(block.id)] ```\(block.code?.language ?? "")")
+        if case .code(let value) = block.type {
+             let lang = value.language ?? ""
+             print("[\(block.id)] ```\(lang)")
              print("\(text)")
              print("```")
         } else if !text.isEmpty {
@@ -109,19 +142,14 @@ struct Write: AsyncParsableCommand {
             return
         }
         
-        let client = NotionClient(apiKey: apiKey)
+        let client = NotionClient(accessKeyProvider: StringAccessKeyProvider(accessKey: apiKey))
         print("Appending to page: \(pageId)...")
         
-        let block = Block(
-            id: UUID().uuidString,
-            type: .paragraph,
-            hasChildren: false,
-            paragraph: TextBlock(richText: [RichText(type: "text", plainText: text, href: nil)]),
-            isNew: true
-        )
+        let blockType = BlockType.paragraph(BlockType.TextAndChildrenBlockValue(richText: [RichText(string: text)], color: .default))
+        let writeBlock = WriteBlock(type: blockType)
         
         do {
-            _ = try await client.appendBlocks(blockId: pageId, blocks: [block])
+            _ = try await client.blockAppend(blockId: Block.Identifier(pageId), children: [writeBlock])
             print("Successfully appended block!")
         } catch {
             print("Error appending block: \(error)")
@@ -144,7 +172,34 @@ struct Sync: AsyncParsableCommand {
             return
         }
         
+        // 1. Check if file exists
         let fileURL = URL(fileURLWithPath: filePath)
+        let fileExists = FileManager.default.fileExists(atPath: filePath)
+        let client = NotionClient(accessKeyProvider: StringAccessKeyProvider(accessKey: apiKey))
+        
+        if !fileExists {
+            print("File not found at \(filePath). Fetching content from Notion page \(pageId)...")
+            do {
+                let fetched = try await client.blockChildren(blockId: Block.Identifier(pageId))
+                let parsedBlocks = fetched.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type, isNew: false) }
+                
+                if parsedBlocks.isEmpty {
+                    print("Notion page is empty. Creating empty file.")
+                    try "".write(to: fileURL, atomically: true, encoding: .utf8)
+                } else {
+                    print("Fetched \(parsedBlocks.count) blocks. Writing to \(fileURL.lastPathComponent)...")
+                    let content = serialize(blocks: parsedBlocks)
+                    try content.write(to: fileURL, atomically: true, encoding: .utf8)
+                }
+                print("Successfully created local file!")
+                return
+            } catch {
+                print("Error fetching content to create file: \(error)")
+                return
+            }
+        }
+        
+        // 2. File exists, proceed with Sync (Read -> Parse -> Push)
         guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
             print("Error: Could not read file at \(filePath)")
             return
@@ -153,7 +208,7 @@ struct Sync: AsyncParsableCommand {
         print("Read \(content.count) bytes from \(fileURL.lastPathComponent)")
         
         let parser = MarkdownParser()
-        let blocks = parser.parse(markdown: content)
+        let blocks = parser.parse(markdown: content) 
         print("Parsed \(blocks.count) blocks.")
         
         if blocks.isEmpty {
@@ -161,34 +216,34 @@ struct Sync: AsyncParsableCommand {
             return
         }
         
-        let client = NotionClient(apiKey: apiKey)
         print("Syncing to Notion page \(pageId)...")
         
-        var newBlocksBuffer: [Block] = []
-        var finalOrderedBlocks: [Block] = []
+        var newBlocksBuffer: [WriteBlock] = []
+        var finalOrderedBlocks: [ParsedBlock] = []
         
         for block in blocks {
             if block.isNew {
-                newBlocksBuffer.append(block)
+                newBlocksBuffer.append(WriteBlock(type: block.type))
             } else {
                 if !newBlocksBuffer.isEmpty {
                     print("Appending \(newBlocksBuffer.count) new blocks...")
-                    let created = try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
-                    finalOrderedBlocks.append(contentsOf: created)
+                    let createdList = try await client.blockAppend(blockId: Block.Identifier(pageId), children: newBlocksBuffer)
+                    let createdParsed = createdList.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type, isNew: false) }
+                    finalOrderedBlocks.append(contentsOf: createdParsed)
                     newBlocksBuffer.removeAll()
                 }
                 
                 print("Updating block \(block.id)...")
-                let richText = getRichText(from: block)
-                try await client.updateBlock(blockId: block.id, type: block.type, richText: richText)
+                _ = try await client.blockUpdate(blockId: Block.Identifier(block.id), value: UpdateBlock(type: block.type))
                 finalOrderedBlocks.append(block)
             }
         }
         
         if !newBlocksBuffer.isEmpty {
              print("Appending \(newBlocksBuffer.count) new blocks...")
-             let created = try await client.appendBlocks(blockId: pageId, blocks: newBlocksBuffer)
-             finalOrderedBlocks.append(contentsOf: created)
+             let createdList = try await client.blockAppend(blockId: Block.Identifier(pageId), children: newBlocksBuffer)
+             let createdParsed = createdList.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type, isNew: false) }
+             finalOrderedBlocks.append(contentsOf: createdParsed)
         }
         
         print("Successfully synced! Writing back IDs to \(filePath)...")
@@ -196,29 +251,34 @@ struct Sync: AsyncParsableCommand {
         try newContent.write(to: fileURL, atomically: true, encoding: .utf8)
     }
     
-    func serialize(blocks: [Block]) -> String {
+    func serialize(blocks: [ParsedBlock]) -> String {
         var output = ""
         for block in blocks {
             output += "<!-- notion-id: \(block.id) -->\n"
             
-            let text = serializeRichTextToMarkdown(getRichText(from: block))
+            let type = block.type
+            let text: String
             
-            if block.type == .code {
-                let lang = block.code?.language ?? ""
-                output += "```\(lang)\n\(text)\n```\n"
+            if case .code(let value) = type {
+                let lang = value.language ?? ""
+                let codeContent = value.richText.compactMap { $0.plainText }.joined()
+                output += "```\(lang)\n\(codeContent)\n```\n"
                 continue
             }
             
+            let richText = getRichText(from: type)
+            text = serializeRichTextToMarkdown(richText)
+            
             let prefix: String
-            switch block.type {
+            switch type {
             case .heading1: prefix = "# "
             case .heading2: prefix = "## "
             case .heading3: prefix = "### "
             case .bulletedListItem: prefix = "- "
             case .numberedListItem: prefix = "1. "
             case .quote: prefix = "> "
-            case .toDo:
-                 let checked = block.toDo?.checked ?? false
+            case .toDo(let v):
+                 let checked = v.checked ?? false
                  prefix = checked ? "- [x] " : "- [ ] "
             default: prefix = ""
             }
@@ -230,12 +290,11 @@ struct Sync: AsyncParsableCommand {
     
     func serializeRichTextToMarkdown(_ richText: [RichText]) -> String {
         return richText.map { rt in
-            var text = rt.plainText
-            if let ann = rt.annotations {
-                if ann.code { text = "`\(text)`" }
-                if ann.italic { text = "*\(text)*" }
-                if ann.bold { text = "**\(text)**" }
-            }
+            var text = rt.plainText ?? ""
+            let ann = rt.annotations
+            if ann.code { text = "`\(text)`" }
+            if ann.italic { text = "*\(text)*" }
+            if ann.bold { text = "**\(text)**" }
             return text
         }.joined()
     }
@@ -253,9 +312,9 @@ struct Test: AsyncParsableCommand {
         let parser = MarkdownParser()
         let blocks = parser.parse(markdown: content)
         
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-        let data = try encoder.encode(blocks)
-        print(String(data: data, encoding: .utf8)!)
+        print("Parsed \(blocks.count) blocks.")
+        for b in blocks {
+            print(b.id, b.type)
+        }
     }
 }

@@ -1,171 +1,127 @@
 import Foundation
 import Markdown
+import NotionSwift
 
 public class MarkdownParser {
+    
     public init() {}
     
-    public func parse(markdown: String) -> [Block] {
+    public func parse(markdown: String) -> [ParsedBlock] {
         let document = Document(parsing: markdown)
-        var walker = NotionBlockWalker()
-        walker.visit(document)
-        return walker.blocks
-    }
-}
-
-private struct NotionBlockWalker: MarkupWalker {
-    var blocks: [Block] = []
-    var pendingId: String? = nil
-    
-    mutating func visitHTMLBlock(_ html: HTMLBlock) {
-        let text = html.rawHTML.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Expecting <!-- notion-id: ... -->
-        if text.hasPrefix("<!-- notion-id:") && text.hasSuffix("-->") {
-            let idPart = text.dropFirst("<!-- notion-id:".count).dropLast("-->".count)
-            pendingId = idPart.trimmingCharacters(in: .whitespaces)
-        }
-    }
-    
-    mutating func visitHeading(_ heading: Heading) {
-        let richText = extractRichText(from: heading)
-        let id = pendingId ?? UUID().uuidString
-        let isNew = (pendingId == nil)
+        var blocks: [ParsedBlock] = []
+        var pendingId: String? = nil
         
-        let type: BlockType
-        if heading.level == 1 { type = .heading1 }
-        else if heading.level == 2 { type = .heading2 }
-        else { type = .heading3 }
+        let nodes = flattenNodes(document.children)
         
-        let block = Block(
-            id: id,
-            type: type,
-            hasChildren: false,
-            heading1: type == .heading1 ? TextBlock(richText: richText) : nil,
-            heading2: type == .heading2 ? TextBlock(richText: richText) : nil,
-            heading3: type == .heading3 ? TextBlock(richText: richText) : nil,
-            isNew: isNew
-        )
-        blocks.append(block)
-        pendingId = nil
-    }
-    
-    mutating func visitParagraph(_ paragraph: Paragraph) {
-        // Skip paragraphs that are children of ListItems (handled in visitListItem)
-        if paragraph.parent is ListItem { return }
-        
-        let richText = extractRichText(from: paragraph)
-        let id = pendingId ?? UUID().uuidString
-        let isNew = (pendingId == nil)
-        
-        let block = Block(
-            id: id,
-            type: .paragraph,
-            hasChildren: false,
-            paragraph: TextBlock(richText: richText),
-            isNew: isNew
-        )
-        blocks.append(block)
-        pendingId = nil
-    }
-    
-    mutating func visitBlockQuote(_ blockQuote: BlockQuote) {
-        let richText = extractRichText(from: blockQuote)
-        let id = pendingId ?? UUID().uuidString
-        let isNew = (pendingId == nil)
-        
-        let block = Block(
-            id: id,
-            type: .quote,
-            hasChildren: false,
-            quote: QuoteBlock(richText: richText),
-            isNew: isNew
-        )
-        blocks.append(block)
-        pendingId = nil
-    }
-    
-    mutating func visitCodeBlock(_ codeBlock: Markdown.CodeBlock) {
-        let text = codeBlock.code
-        let language = codeBlock.language ?? "plain text"
-        let id = pendingId ?? UUID().uuidString
-        let isNew = (pendingId == nil)
-        
-        let block = Block(
-            id: id,
-            type: .code,
-            hasChildren: false,
-            code: SwiftNotionCore.CodeBlock(richText: [RichText(type: "text", plainText: text, href: nil)], language: language),
-            isNew: isNew
-        )
-        blocks.append(block)
-        pendingId = nil
-    }
-    
-    mutating func visitListItem(_ listItem: ListItem) {
-        let richText = extractRichText(from: listItem)
-        let id = pendingId ?? UUID().uuidString
-        let isNew = (pendingId == nil)
-        
-        // Check if it's a To-Do item (hacky check on start of text? 
-        // actually swift-markdown doesn't explicitly parse [ ] as a task list item unless GFM is fully enabled and we check the checkbox state)
-        // BUT, swift-markdown ListItem has a `checkbox` property!
-        
-        var type: BlockType?
-        var checked: Bool?
-        
-        if let checkbox = listItem.checkbox {
-            type = .toDo
-            checked = (checkbox == .checked)
-        } else if listItem.parent is UnorderedList {
-            type = .bulletedListItem
-        } else {
-            type = .numberedListItem
-        }
-        
-        guard let finalType = type else { return }
-        
-        let block = Block(
-            id: id,
-            type: finalType,
-            hasChildren: false,
-            bulletedListItem: finalType == .bulletedListItem ? TextBlock(richText: richText) : nil,
-            numberedListItem: finalType == .numberedListItem ? TextBlock(richText: richText) : nil,
-            toDo: finalType == .toDo ? ToDoBlock(richText: richText, checked: checked ?? false) : nil,
-            isNew: isNew
-        )
-        blocks.append(block)
-        pendingId = nil
-        
-        // Do NOT descend into children
-    }
-}
-
-// Helper to extract RichText from a Markup node (recursively)
-private func extractRichText(from markup: Markup) -> [RichText] {
-    var results: [RichText] = []
-    
-    func visit(_ node: Markup, currentAnnotations: Annotations) {
-        for child in node.children {
-            if let text = child as? Text {
-                results.append(RichText(type: "text", plainText: text.string, href: nil, annotations: currentAnnotations))
-            } else if let code = child as? InlineCode {
-                var ann = currentAnnotations
-                ann.code = true
-                // InlineCode doesn't have children, captures text in .code
-                results.append(RichText(type: "text", plainText: code.code, href: nil, annotations: ann))
-            } else if let strong = child as? Strong {
-                var ann = currentAnnotations
-                ann.bold = true
-                visit(strong, currentAnnotations: ann)
-            } else if let emphasis = child as? Emphasis {
-                var ann = currentAnnotations
-                ann.italic = true
-                visit(emphasis, currentAnnotations: ann)
-            } else {
-                visit(child, currentAnnotations: currentAnnotations)
+        for node in nodes {
+            if let html = node as? HTMLBlock {
+                if let id = extractId(from: html.rawHTML) {
+                    pendingId = id
+                }
+                continue
+            }
+            
+            if let block = visit(node, id: pendingId) {
+                blocks.append(block)
+                pendingId = nil
             }
         }
+        
+        return blocks
     }
     
-    visit(markup, currentAnnotations: Annotations())
-    return results
+    private func flattenNodes(_ children: Markdown.MarkupChildren) -> [Markup] {
+        var result: [Markup] = []
+        for child in children {
+            if let uList = child as? UnorderedList {
+                result.append(contentsOf: flattenNodes(uList.children))
+            } else if let oList = child as? OrderedList {
+                result.append(contentsOf: flattenNodes(oList.children))
+            } else if let listItem = child as? ListItem {
+                result.append(listItem)
+            } else {
+                result.append(child)
+            }
+        }
+        return result
+    }
+    
+    private func extractId(from text: String) -> String? {
+        let key = "<!-- notion-id: "
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(key) {
+             let start = text.range(of: key)?.upperBound
+             let end = text.range(of: " -->", options: .backwards)?.lowerBound
+             if let s = start, let e = end, s < e {
+                 return String(text[s..<e])
+             }
+        }
+        return nil
+    }
+    
+    private func visit(_ node: Markup, id: String?) -> ParsedBlock? {
+        let finalId = id ?? UUID().uuidString
+        let isNew = (id == nil)
+        var type: BlockType?
+        
+        let rt = extractRichText(from: node)
+        
+        if let heading = node as? Heading {
+            switch heading.level {
+            case 1: type = .heading1(BlockType.HeadingBlockValue(richText: rt, color: .default, isToggleable: false))
+            case 2: type = .heading2(BlockType.HeadingBlockValue(richText: rt, color: .default, isToggleable: false))
+            case 3: type = .heading3(BlockType.HeadingBlockValue(richText: rt, color: .default, isToggleable: false))
+            default: type = .paragraph(BlockType.TextAndChildrenBlockValue(richText: rt, color: .default))
+            }
+        } else if let _ = node as? Paragraph {
+            type = .paragraph(BlockType.TextAndChildrenBlockValue(richText: rt, color: .default))
+        } else if let _ = node as? BlockQuote {
+            type = .quote(BlockType.QuoteBlockValue(richText: rt, color: .default))
+        } else if let codeBlock = node as? CodeBlock {
+            // NotionSwift CodeBlockValue init requires richText array and language
+            let codeText = [RichText(string: codeBlock.code)]
+            type = .code(BlockType.CodeBlockValue(richText: codeText, language: codeBlock.language))
+        } else if let listItem = node as? ListItem {
+            let checked = (listItem.checkbox == .checked)
+            let itemRT = extractRichText(from: listItem)
+            
+            if listItem.checkbox != nil {
+                type = .toDo(BlockType.ToDoBlockValue(richText: itemRT, checked: checked, color: .default))
+            } else {
+                type = .bulletedListItem(BlockType.TextAndChildrenBlockValue(richText: itemRT, color: .default))
+            }
+        }
+        
+        if let t = type {
+            return ParsedBlock(id: finalId, type: t, isNew: isNew)
+        }
+        
+        return nil
+    }
+
+    private func extractRichText(from node: Markup) -> [RichText] {
+        var results: [RichText] = []
+        
+        func walk(_ markup: Markup) {
+            for child in markup.children {
+                if let text = child as? Text {
+                    results.append(RichText(string: text.string))
+                } else if let code = child as? InlineCode {
+                    results.append(RichText(string: code.code, annotations: .code))
+                } else if let strong = child as? Strong {
+                    let plain = child.children.compactMap { ($0 as? Text)?.string }.joined()
+                     results.append(RichText(string: plain, annotations: .bold))
+                } else if let emphasis = child as? Emphasis {
+                    let plain = child.children.compactMap { ($0 as? Text)?.string }.joined()
+                    results.append(RichText(string: plain, annotations: .italic))
+                } else {
+                   if child.childCount > 0 {
+                       walk(child)
+                   }
+                }
+            }
+        }
+        
+        walk(node)
+        return results
+    }
 }
