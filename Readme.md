@@ -1,5 +1,86 @@
 # SwiftNotion
 
+## CLI Interface
+
+The `SwiftNotion` executable provides several commands to interact with your Notion pages.
+
+### Environment Setup
+
+Create a `.env` file in the root directory and add your Notion API Integration Token:
+
+```bash
+NOTION_KEY="your_notion_integration_token"
+```
+
+You can use `.env.example` as a template.
+
+### Commands
+
+#### 1. Pull Notion Page (Read)
+Fetch a Notion page and save it as a local Markdown file.
+
+**Usage:**
+```bash
+swift run SwiftNotion pull <page-id> <file-path>
+```
+- `<page-id>`: The ID of the Notion page you want to pull.
+- `<file-path>`: The local path where the Markdown file will be saved.
+
+#### 2. Push to Notion (Create)
+Create a new Notion page from a local Markdown file. The command will extract the title from the first H1 in the file and write back the generated Notion IDs to the file.
+
+**Usage:**
+```bash
+swift run SwiftNotion push <file-path> <parent-id>
+```
+- `<file-path>`: Path to your local `.md` file.
+- `<parent-id>`: The ID of the parent page or database where the new page will be created.
+
+#### 3. Sync Updates (Update)
+Update an existing Notion page with changes from a local Markdown file. It uses embedded IDs to update, append, or delete blocks.
+
+**Usage:**
+```bash
+swift run SwiftNotion sync <file-path> <page-id>
+```
+- `<file-path>`: Path to your local `.md` file.
+- `<page-id>`: The ID of the Notion page to sync with.
+
+#### 4. Delete Notion Page (Delete)
+Archive a Notion page.
+
+**Usage:**
+```bash
+swift run SwiftNotion delete <page-id>
+```
+- `<page-id>`: The ID of the Notion page to archive.
+
+#### 5. Test Parser
+Test the local Markdown parser by reading a file and outputting the parsed block types and IDs.
+
+**Usage:**
+```bash
+swift run SwiftNotion test <file-path>
+```
+- `<file-path>`: Path to the local Markdown file to test.
+
+### Examples
+
+**Download a Notion page:**
+```bash
+swift run SwiftNotion pull 1a2b3c4d5e6f7g8h9i0j notebook.md
+```
+
+**Create a new page from Markdown:**
+```bash
+swift run SwiftNotion push new_feature.md 1a2b3c4d5e6f7g8h9i0j
+```
+
+**Sync updates to Notion:**
+```bash
+swift run SwiftNotion sync notebook.md 1a2b3c4d5e6f7g8h9i0j
+```
+
 ## BDD Specs
 
 ### Story: Pull Notion page into Git repository (Read)
