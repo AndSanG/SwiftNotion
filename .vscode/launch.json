@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:SwiftNotion}",
+            "name": "Debug SwiftNotion",
+            "program": "${workspaceFolder:SwiftNotion}/.build/debug/SwiftNotion",
+            "preLaunchTask": "swift: Build Debug SwiftNotion"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:SwiftNotion}",
+            "name": "Release SwiftNotion",
+            "program": "${workspaceFolder:SwiftNotion}/.build/release/SwiftNotion",
+            "preLaunchTask": "swift: Build Release SwiftNotion"
+        }
+    ]
+}
