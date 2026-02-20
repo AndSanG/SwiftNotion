@@ -3,6 +3,23 @@ import ArgumentParser
 import SwiftNotionCore
 @preconcurrency import NotionSwift
 
+struct DotEnv {
+    static func load(path: String = ".env") {
+        let url = URL(fileURLWithPath: path)
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return }
+        
+        let lines = content.components(separatedBy: .newlines)
+        for line in lines {
+            let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+            if parts.count == 2 {
+                let key = parts[0].trimmingCharacters(in: .whitespaces)
+                let value = parts[1].trimmingCharacters(in: .whitespaces)
+                setenv(key, value, 1)
+            }
+        }
+    }
+}
+
 @main
 struct SwiftNotion: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -79,6 +96,7 @@ struct Read: AsyncParsableCommand {
     var pageId: String
     
     func run() async throws {
+        DotEnv.load()
         guard let apiKey = ProcessInfo.processInfo.environment["NOTION_KEY"] else {
             print("Error: NOTION_KEY environment variable not set.")
             return
@@ -137,6 +155,7 @@ struct Write: AsyncParsableCommand {
     var text: String
     
     func run() async throws {
+        DotEnv.load()
         guard let apiKey = ProcessInfo.processInfo.environment["NOTION_KEY"] else {
             print("Error: NOTION_KEY environment variable not set.")
             return
@@ -167,6 +186,7 @@ struct Sync: AsyncParsableCommand {
     var pageId: String
     
     func run() async throws {
+        DotEnv.load()
         guard let apiKey = ProcessInfo.processInfo.environment["NOTION_KEY"] else {
             print("Error: NOTION_KEY environment variable not set.")
             return
