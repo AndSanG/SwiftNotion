@@ -24,7 +24,7 @@ struct DotEnv {
 struct SwiftNotion: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "A utility to sync files with Notion.",
-        subcommands: [Read.self, Write.self, Sync.self, Test.self]
+        subcommands: [Pull.self, Push.self, Sync.self, Delete.self, Test.self]
     )
 }
 
@@ -53,270 +53,202 @@ extension NotionClient {
             }
         }
     }
-}
-
-// Helper to print plain text from blocks
-func getPlainText(from type: BlockType) -> String {
-    let richText: [RichText]
-    switch type {
-    case .paragraph(let value): richText = value.richText
-    case .heading1(let value): richText = value.richText
-    case .heading2(let value): richText = value.richText
-    case .heading3(let value): richText = value.richText
-    case .bulletedListItem(let value): richText = value.richText
-    case .numberedListItem(let value): richText = value.richText
-    case .toDo(let value): richText = value.richText
-    case .quote(let value): richText = value.richText
-    case .code(let value): richText = value.richText
-    default: return ""
-    }
     
-    return richText.compactMap { $0.plainText }.joined()
-}
-
-func getRichText(from type: BlockType) -> [RichText] {
-    switch type {
-    case .paragraph(let value): return value.richText
-    case .heading1(let value): return value.richText
-    case .heading2(let value): return value.richText
-    case .heading3(let value): return value.richText
-    case .bulletedListItem(let value): return value.richText
-    case .numberedListItem(let value): return value.richText
-    case .toDo(let value): return value.richText
-    case .quote(let value): return value.richText
-    case .code(let value): return value.richText
-    default: return []
-    }
-}
-
-struct Read: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Read content from a Notion page.")
-    
-    @Argument(help: "The Block/Page ID to read from.")
-    var pageId: String
-    
-    func run() async throws {
-        DotEnv.load()
-        guard let apiKey = ProcessInfo.processInfo.environment["NOTION_KEY"] else {
-            print("Error: NOTION_KEY environment variable not set.")
-            return
-        }
-        
-        let client = NotionClient(accessKeyProvider: StringAccessKeyProvider(accessKey: apiKey))
-        print("Fetching blocks for page: \(pageId)...")
-        
-        do {
-            let blocks = try await client.blockChildren(blockId: Block.Identifier(pageId))
-            for block in blocks.results {
-                printBlock(block)
+    func pageCreate(request: PageCreateRequest) async throws -> Page {
+        return try await withCheckedThrowingContinuation { continuation in
+            self.pageCreate(request: request) { result in
+                continuation.resume(with: result)
             }
-        } catch {
-            print("Error fetching blocks: \(error)")
         }
     }
     
-    func printBlock(_ block: ReadBlock) {
-        let prefix: String
-        let text = getPlainText(from: block.type)
-        
-        switch block.type {
-        case .heading1: prefix = "# "
-        case .heading2: prefix = "## "
-        case .heading3: prefix = "### "
-        case .paragraph: prefix = ""
-        case .bulletedListItem: prefix = "- "
-        case .numberedListItem: prefix = "1. "
-        case .quote: prefix = "> "
-        case .toDo(let value):
-            let checked = value.checked ?? false
-            prefix = checked ? "- [x] " : "- [ ] "
-        case .code: prefix = ""
-        default: return
-        }
-        
-        if case .code(let value) = block.type {
-             let lang = value.language ?? ""
-             print("[\(block.id)] ```\(lang)")
-             print("\(text)")
-             print("```")
-        } else if !text.isEmpty {
-            print("[\(block.id)] \(prefix)\(text)")
+    func pageUpdate(pageId: Page.Identifier, request: PageUpdateRequest) async throws -> Page {
+        return try await withCheckedThrowingContinuation { continuation in
+            self.pageUpdate(pageId: pageId, request: request) { result in
+                 continuation.resume(with: result)
+            }
         }
     }
 }
 
-struct Write: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Append a paragraph to a Notion page.")
+// MARK: - Commands
+
+struct Pull: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Pull Notion page into Git repository (Read).")
     
-    @Argument(help: "The Block/Page ID to write to.")
+    @Argument(help: "The Page ID to pull.")
     var pageId: String
     
-    @Argument(help: "The text content to append.")
-    var text: String
+    @Argument(help: "The local file path to save to.")
+    var filePath: String
     
     func run() async throws {
         DotEnv.load()
         guard let apiKey = ProcessInfo.processInfo.environment["NOTION_KEY"] else {
-            print("Error: NOTION_KEY environment variable not set.")
+            print("Error: NOTION_KEY not set.")
             return
         }
         
         let client = NotionClient(accessKeyProvider: StringAccessKeyProvider(accessKey: apiKey))
-        print("Appending to page: \(pageId)...")
+        let fileURL = URL(fileURLWithPath: filePath)
         
-        let blockType = BlockType.paragraph(BlockType.TextAndChildrenBlockValue(richText: [RichText(string: text)], color: .default))
-        let writeBlock = WriteBlock(type: blockType)
+        print("Pulling page \(pageId) to \(filePath)...")
         
         do {
-            _ = try await client.blockAppend(blockId: Block.Identifier(pageId), children: [writeBlock])
-            print("Successfully appended block!")
+            let fetched = try await client.blockChildren(blockId: Block.Identifier(pageId))
+            let parsedBlocks = fetched.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type, isNew: false) }
+            
+            let serializer = MarkdownSerializer()
+            let content = serializer.serialize(blocks: parsedBlocks)
+            try content.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
+            print("Successfully pulled!")
         } catch {
-            print("Error appending block: \(error)")
+            print("Error pulling page: \(error)")
+        }
+    }
+}
+
+struct Push: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Create Notion page from Git repository (Create).")
+    
+    @Argument(help: "Path to the local Markdown file.")
+    var filePath: String
+    
+    @Argument(help: "The Parent Page/Database ID.")
+    var parentId: String
+    
+    func run() async throws {
+        DotEnv.load()
+        guard let apiKey = ProcessInfo.processInfo.environment["NOTION_KEY"] else {
+            print("Error: NOTION_KEY not set.")
+            return
+        }
+        
+        let fileURL = URL(fileURLWithPath: filePath)
+        let content = try String(contentsOf: fileURL, encoding: String.Encoding.utf8)
+        
+        let parser = MarkdownParser()
+        let blocks = parser.parse(markdown: content)
+        
+        let client = NotionClient(accessKeyProvider: StringAccessKeyProvider(accessKey: apiKey))
+        
+        // Extract title from first H1 or filename
+        var title = fileURL.deletingPathExtension().lastPathComponent
+        if case .heading1(let value) = blocks.first?.type {
+             title = value.richText.compactMap { $0.plainText }.joined()
+        }
+        
+        print("Creating new page '\(title)' in parent \(parentId)...")
+        
+        let writeBlocks = blocks.map { WriteBlock(type: $0.type) }
+        
+        let request = PageCreateRequest(
+            parent: .page(Page.Identifier(parentId)),
+            properties: ["title": WritePageProperty(type: .title([RichText(string: title)]))],
+            children: writeBlocks
+        )
+        
+        do {
+            let newPage = try await client.pageCreate(request: request)
+            
+            print("Successfully created page: \(newPage.id.rawValue)")
+            
+            // Re-fetch blocks to get their IDs and write back to file
+            let fetched = try await client.blockChildren(blockId: Block.Identifier(newPage.id.rawValue))
+            let finalBlocks = fetched.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type, isNew: false) }
+            
+            let serializer = MarkdownSerializer()
+            let newContent = serializer.serialize(blocks: finalBlocks)
+            try newContent.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
+            print("Updated local file with Notion IDs.")
+        } catch {
+            print("Error creating page: \(error)")
         }
     }
 }
 
 struct Sync: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Parse a local Markdown file and append it to Notion.")
+    static let configuration = CommandConfiguration(abstract: "Update Notion page from Git repository (Update).")
     
     @Argument(help: "Path to the local Markdown file.")
     var filePath: String
     
-    @Argument(help: "The Block/Page ID to append to.")
+    @Argument(help: "The Page ID to update.")
     var pageId: String
     
     func run() async throws {
         DotEnv.load()
         guard let apiKey = ProcessInfo.processInfo.environment["NOTION_KEY"] else {
-            print("Error: NOTION_KEY environment variable not set.")
+            print("Error: NOTION_KEY not set.")
             return
         }
         
-        // 1. Check if file exists
         let fileURL = URL(fileURLWithPath: filePath)
-        let fileExists = FileManager.default.fileExists(atPath: filePath)
-        let client = NotionClient(accessKeyProvider: StringAccessKeyProvider(accessKey: apiKey))
-        
-        if !fileExists {
-            print("File not found at \(filePath). Fetching content from Notion page \(pageId)...")
-            do {
-                let fetched = try await client.blockChildren(blockId: Block.Identifier(pageId))
-                let parsedBlocks = fetched.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type, isNew: false) }
-                
-                if parsedBlocks.isEmpty {
-                    print("Notion page is empty. Creating empty file.")
-                    try "".write(to: fileURL, atomically: true, encoding: .utf8)
-                } else {
-                    print("Fetched \(parsedBlocks.count) blocks. Writing to \(fileURL.lastPathComponent)...")
-                    let content = serialize(blocks: parsedBlocks)
-                    try content.write(to: fileURL, atomically: true, encoding: .utf8)
-                }
-                print("Successfully created local file!")
-                return
-            } catch {
-                print("Error fetching content to create file: \(error)")
-                return
-            }
-        }
-        
-        // 2. File exists, proceed with Sync (Read -> Parse -> Push)
-        guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
-            print("Error: Could not read file at \(filePath)")
-            return
-        }
-        
-        print("Read \(content.count) bytes from \(fileURL.lastPathComponent)")
+        let content = try String(contentsOf: fileURL, encoding: String.Encoding.utf8)
         
         let parser = MarkdownParser()
-        let blocks = parser.parse(markdown: content) 
-        print("Parsed \(blocks.count) blocks.")
+        let blocks = parser.parse(markdown: content)
         
-        if blocks.isEmpty {
-            print("No blocks found to sync.")
+        let client = NotionClient(accessKeyProvider: StringAccessKeyProvider(accessKey: apiKey))
+        print("Syncing updates to Notion page \(pageId)...")
+        
+        var finalOrderedBlocks: [ParsedBlock] = []
+        var newBlocksBuffer: [WriteBlock] = []
+        
+        do {
+            for block in blocks {
+                if block.isNew {
+                    newBlocksBuffer.append(WriteBlock(type: block.type))
+                } else {
+                    if !newBlocksBuffer.isEmpty {
+                        let createdList = try await client.blockAppend(blockId: Block.Identifier(pageId), children: newBlocksBuffer)
+                        finalOrderedBlocks.append(contentsOf: createdList.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type) })
+                        newBlocksBuffer.removeAll()
+                    }
+                    
+                    _ = try await client.blockUpdate(blockId: Block.Identifier(block.id), value: UpdateBlock(type: block.type))
+                    finalOrderedBlocks.append(block)
+                }
+            }
+            
+            if !newBlocksBuffer.isEmpty {
+                let createdList = try await client.blockAppend(blockId: Block.Identifier(pageId), children: newBlocksBuffer)
+                finalOrderedBlocks.append(contentsOf: createdList.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type) })
+            }
+            
+            let serializer = MarkdownSerializer()
+            let updatedContent = serializer.serialize(blocks: finalOrderedBlocks)
+            try updatedContent.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
+            print("Successfully synced updates!")
+        } catch {
+            print("Error syncing: \(error)")
+        }
+    }
+}
+
+struct Delete: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Delete Notion page from Git repository (Delete).")
+    
+    @Argument(help: "The Page ID to archive.")
+    var pageId: String
+    
+    func run() async throws {
+        DotEnv.load()
+        guard let apiKey = ProcessInfo.processInfo.environment["NOTION_KEY"] else {
+            print("Error: NOTION_KEY not set.")
             return
         }
         
-        print("Syncing to Notion page \(pageId)...")
+        let client = NotionClient(accessKeyProvider: StringAccessKeyProvider(accessKey: apiKey))
+        print("Archiving page \(pageId)...")
         
-        var newBlocksBuffer: [WriteBlock] = []
-        var finalOrderedBlocks: [ParsedBlock] = []
-        
-        for block in blocks {
-            if block.isNew {
-                newBlocksBuffer.append(WriteBlock(type: block.type))
-            } else {
-                if !newBlocksBuffer.isEmpty {
-                    print("Appending \(newBlocksBuffer.count) new blocks...")
-                    let createdList = try await client.blockAppend(blockId: Block.Identifier(pageId), children: newBlocksBuffer)
-                    let createdParsed = createdList.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type, isNew: false) }
-                    finalOrderedBlocks.append(contentsOf: createdParsed)
-                    newBlocksBuffer.removeAll()
-                }
-                
-                print("Updating block \(block.id)...")
-                _ = try await client.blockUpdate(blockId: Block.Identifier(block.id), value: UpdateBlock(type: block.type))
-                finalOrderedBlocks.append(block)
-            }
+        do {
+            let request = PageUpdateRequest(archived: true)
+            _ = try await client.pageUpdate(pageId: Page.Identifier(pageId), request: request)
+            print("Page archived successfully.")
+        } catch {
+            print("Error archiving page: \(error)")
         }
-        
-        if !newBlocksBuffer.isEmpty {
-             print("Appending \(newBlocksBuffer.count) new blocks...")
-             let createdList = try await client.blockAppend(blockId: Block.Identifier(pageId), children: newBlocksBuffer)
-             let createdParsed = createdList.results.map { ParsedBlock(id: $0.id.rawValue, type: $0.type, isNew: false) }
-             finalOrderedBlocks.append(contentsOf: createdParsed)
-        }
-        
-        print("Successfully synced! Writing back IDs to \(filePath)...")
-        let newContent = serialize(blocks: finalOrderedBlocks)
-        try newContent.write(to: fileURL, atomically: true, encoding: .utf8)
-    }
-    
-    func serialize(blocks: [ParsedBlock]) -> String {
-        var output = ""
-        for block in blocks {
-            output += "<!-- notion-id: \(block.id) -->\n"
-            
-            let type = block.type
-            let text: String
-            
-            if case .code(let value) = type {
-                let lang = value.language ?? ""
-                let codeContent = value.richText.compactMap { $0.plainText }.joined()
-                output += "```\(lang)\n\(codeContent)\n```\n"
-                continue
-            }
-            
-            let richText = getRichText(from: type)
-            text = serializeRichTextToMarkdown(richText)
-            
-            let prefix: String
-            switch type {
-            case .heading1: prefix = "# "
-            case .heading2: prefix = "## "
-            case .heading3: prefix = "### "
-            case .bulletedListItem: prefix = "- "
-            case .numberedListItem: prefix = "1. "
-            case .quote: prefix = "> "
-            case .toDo(let v):
-                 let checked = v.checked ?? false
-                 prefix = checked ? "- [x] " : "- [ ] "
-            default: prefix = ""
-            }
-            
-            output += "\(prefix)\(text)\n"
-        }
-        return output
-    }
-    
-    func serializeRichTextToMarkdown(_ richText: [RichText]) -> String {
-        return richText.map { rt in
-            var text = rt.plainText ?? ""
-            let ann = rt.annotations
-            if ann.code { text = "`\(text)`" }
-            if ann.italic { text = "*\(text)*" }
-            if ann.bold { text = "**\(text)**" }
-            return text
-        }.joined()
     }
 }
 
@@ -328,7 +260,7 @@ struct Test: AsyncParsableCommand {
     
     func run() async throws {
         let fileURL = URL(fileURLWithPath: filePath)
-        let content = try String(contentsOf: fileURL, encoding: .utf8)
+        let content = try String(contentsOf: fileURL, encoding: String.Encoding.utf8)
         let parser = MarkdownParser()
         let blocks = parser.parse(markdown: content)
         
